@@ -72,6 +72,23 @@ struct HbTaps35
         -1.7148253779e-03, -1.5356513996e-03 };
 };
 
+// High-quality stage-2 set: 59 taps, -55 dB (vs -31 dB for HbTaps35) for the
+// 4fs <-> 8fs stage. Costs ~1.7x the stage-2 multiplies and adds latency.
+struct HbTaps59
+{
+    static constexpr int p = 14;
+    static constexpr double hE[30] = {
+        -5.0318590951e-05, -1.3578313694e-04,  4.5729703212e-04, -1.0280100814e-03,
+         1.9532384223e-03, -3.3583768700e-03,  5.3972979771e-03, -8.2682799115e-03,
+         1.2249139543e-02, -1.7776832717e-02,  2.5640261293e-02, -3.7510746092e-02,
+         5.7751347873e-02, -1.0246423101e-01,  3.1708107556e-01,  3.1708107556e-01,
+        -1.0246423101e-01,  5.7751347873e-02, -3.7510746092e-02,  2.5640261293e-02,
+        -1.7776832717e-02,  1.2249139543e-02, -8.2682799115e-03,  5.3972979771e-03,
+        -3.3583768700e-03,  1.9532384223e-03, -1.0280100814e-03,  4.5729703212e-04,
+        -1.3578313694e-04, -5.0318590951e-05
+    };
+};
+
 // Eco stage-0 set: same LS spec (0.43*pi edge) at 51 taps. -53 dB ripple for
 // 13 MACs per output sample vs HbTaps71's -65 dB for 18 -- both counts are the
 // folded polyphase loop below (one multiply per tap pair) -- for hosts that
@@ -91,13 +108,12 @@ struct HbTaps51
 
 // One 2x stage. Each instance owns delay history for one processing direction.
 //
-// The delay line is indexed by hand instead of with `%`, and the half-band taps
-// are folded: hE[i] == hE[L-1-i], so
+// The delay line is mirrored (no `%` per tap) and the half-band taps are
+// folded: hE[i] == hE[L-1-i], so
 //
 //   sum_{i<L} hE[i] * at(i) == sum_{i<L/2} hE[i] * (at(i) + at(L-1-i))
 //
-// which halves the multiplies and lets the FIR loop walk two cursors that wrap
-// on a compare. The two sums differ only by float rounding.
+// which halves the multiplies. The two sums differ only by float rounding.
 namespace detail {
 
 // The folded FIR equals the plain convolution only when hE is symmetric, so
@@ -213,6 +229,7 @@ struct Oversampler
     HalfBand2x<HbTaps47> s1;
     HalfBand2x<HbTaps35> s2;
     HalfBand2x<HbTaps51> s0e;              // used when ecoStage0 is set
+    HalfBand2x<HbTaps59> s2h;              // used when hqStage2 is set
     int stages = 2;                        // default 4x
     int capacity = 0;                      // largest host-rate block accepted
     std::vector<float> tmp, tmp2;          // ping-pong scratch for mid rates
@@ -220,6 +237,7 @@ struct Oversampler
     HalfBand2x<HbTaps47> down1;
     HalfBand2x<HbTaps35> down2;
     HalfBand2x<HbTaps51> down0e;
+    HalfBand2x<HbTaps59> down2h;
 
     // Swap stage 0 (the strongest, most expensive filter) for the 51-tap eco
     // set in both directions. Leave false for the full -65 dB stage.
@@ -230,6 +248,11 @@ struct Oversampler
     // switches to an empty history and produces a click.
     bool ecoStage0 = false;
 
+    // Swap stage 2 (4fs <-> 8fs, only active at 8x) for the 59-tap -55 dB set.
+    // Same rules as ecoStage0: change only while stopped, then reset() and
+    // re-report latencySamples().
+    bool hqStage2 = false;
+
     void setStages (int s) { stages = std::clamp (s, 1, 3); }
     int  factor() const { return 1 << stages; }
 
@@ -239,6 +262,7 @@ struct Oversampler
         s0e.init(); down0e.init();
         s1.init(); down1.init();
         s2.init(); down2.init();
+        s2h.init(); down2h.init();
         capacity = std::max (0, maxBlock);
         tmp.assign  ((size_t) capacity * 8u + 8u, 0.0f);
         tmp2.assign ((size_t) capacity * 8u + 8u, 0.0f);
@@ -249,6 +273,7 @@ struct Oversampler
         s0e.reset(); down0e.reset();
         s1.reset(); down1.reset();
         s2.reset(); down2.reset();
+        s2h.reset(); down2h.reset();
     }
 
     // in[n] -> out[n * factor()]; `out` must hold n * factor() floats and
@@ -279,6 +304,7 @@ struct Oversampler
             double e, o;
             if (stage == 0)      { if (ecoStage0) s0e.up (in[i], e, o); else s0.up (in[i], e, o); }
             else if (stage == 1) s1.up (in[i], e, o);
+            else if (hqStage2)   s2h.up (in[i], e, o);
             else                 s2.up (in[i], e, o);
             out[2 * i] = (float) e; out[2 * i + 1] = (float) o;
         }
@@ -310,7 +336,8 @@ struct Oversampler
             const double y = stage == 0 ? (ecoStage0 ? down0e.down (in[2 * i], in[2 * i + 1])
                                                      : down0.down  (in[2 * i], in[2 * i + 1]))
                            : stage == 1 ? down1.down (in[2 * i], in[2 * i + 1])
-                                        : down2.down (in[2 * i], in[2 * i + 1]);
+                                        : hqStage2 ? down2h.down (in[2 * i], in[2 * i + 1])
+                                                   : down2.down (in[2 * i], in[2 * i + 1]);
             out[i] = (float) y;
         }
     }
@@ -321,7 +348,7 @@ struct Oversampler
         double l = 0.0;
         for (int s = 0; s < stages; ++s)
         {
-            const int N = s == 0 ? (ecoStage0 ? 51 : 71) : s == 1 ? 47 : 35;
+            const int N = s == 0 ? (ecoStage0 ? 51 : 71) : s == 1 ? 47 : (hqStage2 ? 59 : 35);
             l += (double) (N - 1) / (double) (1 << (s + 1));
         }
         return l;

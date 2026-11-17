@@ -85,6 +85,7 @@ struct Ladder4
 
     inline double process (double x)
     {
+        if (! std::isfinite (x)) x = 0.0;
         const double G  = g / (1.0 + g);
         const double G4 = G * G * G * G;
         const double S  = G * G * G * s[0] + G * G * s[1] + G * s[2] + s[3];

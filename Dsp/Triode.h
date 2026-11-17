@@ -56,6 +56,18 @@ struct TriodeStage
     float Vq = 150.f;         // quiescent plate voltage (solved at reset)
     float outScale = 1.f;
 
+    // --- optional output coupling cap (one-pole high-pass, off by default) ---
+    // A real stage couples into the next one through a cap, so large swings
+    // that shift the plate's DC level decay instead of persisting. fcHz <= 0
+    // disables it (output unchanged). rateHz = processing rate.
+    double coupleR = 0.0, coupleX1 = 0.0, coupleY1 = 0.0;
+    void setOutputCoupling (double fcHz, double rateHz)
+    {
+        coupleR = (fcHz > 0.0 && rateHz > 0.0)
+            ? std::exp (-2.0 * 3.14159265358979323846 * fcHz / rateHz) : 0.0;
+        coupleX1 = coupleY1 = 0.0;
+    }
+
     // Fit the Rk||Ck cathode network. rateHz is the *processing* rate —
     // under oversampling pass the oversampled rate, not the host rate.
     // Call before reset() so the quiescent solve sees the fitted network.
@@ -74,6 +86,7 @@ struct TriodeStage
         VpPrev = 150.f;
         cathodeVk = 0.0;
         lastIp = 0.f;
+        coupleX1 = coupleY1 = 0.0;
 
         // Reset can spend more work than the per-sample solver to find a
         // consistent DC operating point without changing the processing budget.
@@ -148,21 +161,25 @@ struct TriodeStage
         iterations = processingIterations;
     }
 
-    inline float korenIp (float Vg, float Vp, float* dIp_dVp = nullptr) const
+    // Templated so the per-sample solver can run in double while callers that
+    // pass floats keep the float arithmetic they always had.
+    template <typename T>
+    inline T korenIp (T Vg, T Vp, T* dIp_dVp = nullptr) const
     {
-        const float S  = std::sqrt (kvb + Vp * Vp);
-        const float u  = kp * (1.f / mu + Vg / S);
+        const T Kp = (T) kp, Ex = (T) ex, Kg = (T) kg;
+        const T S  = std::sqrt ((T) kvb + Vp * Vp);
+        const T u  = Kp * (T (1) / (T) mu + Vg / S);
         // softplus(u) = ln(1+e^u), numerically stable
-        const float sp = u > 20.f ? u : std::log1p (std::exp (u));
-        const float E1 = Vp / kp * sp;
-        const float Ip = E1 > 0.f ? std::pow (E1, ex) / kg : 0.f;
+        const T sp = u > T (20) ? u : std::log1p (std::exp (u));
+        const T E1 = Vp / Kp * sp;
+        const T Ip = E1 > T (0) ? std::pow (E1, Ex) / Kg : T (0);
 
         if (dIp_dVp != nullptr)
         {
-            const float sig = u > 20.f ? 1.f : 1.f / (1.f + std::exp (-u));
+            const T sig = u > T (20) ? T (1) : T (1) / (T (1) + std::exp (-u));
             // dE1/dVp = sp/kp + (Vp/kp)*sig*(du/dVp), du/dVp = -kp*Vg*Vp/S^3
-            const float dE1 = sp / kp - Vg * Vp * Vp * sig / (S * S * S);
-            *dIp_dVp = E1 > 0.f ? ex * std::pow (E1, ex - 1.f) / kg * dE1 : 0.f;
+            const T dE1 = sp / Kp - Vg * Vp * Vp * sig / (S * S * S);
+            *dIp_dVp = E1 > T (0) ? Ex * std::pow (E1, Ex - T (1)) / Kg * dE1 : T (0);
         }
         return Ip;
     }
@@ -172,17 +189,20 @@ struct TriodeStage
     // the analytic derivative applies unchanged. Vk == 0 -> legacy solve.
     inline float solveVp (float Vg, float Vk = 0.f)
     {
-        float Vp = VpPrev;
+        // The Newton loop runs in double; state and results stay float.
+        const double vg = (double) Vg - (double) Vk, vk = Vk;
+        const double hi = Bplus, rl = Rload;
+        double Vp = VpPrev;
         for (int i = 0; i < iterations; ++i)
         {
-            float dIp;
-            const float Ip = korenIp (Vg - Vk, Vp - Vk, &dIp);
-            const float f  = (Bplus - Vp) / Rload - Ip;
-            const float df = -1.f / Rload - dIp;   // strictly negative -> safe
-            Vp = std::clamp (Vp - f / df, 0.f, Bplus);
+            double dIp;
+            const double Ip = korenIp<double> (vg, Vp - vk, &dIp);
+            const double f  = (hi - Vp) / rl - Ip;
+            const double df = -1.0 / rl - dIp;     // strictly negative -> safe
+            Vp = std::clamp (Vp - f / df, 0.0, hi);
         }
-        lastIp = korenIp (Vg - Vk, Vp - Vk);
-        return Vp;
+        lastIp = (float) korenIp<double> (vg, Vp - vk);
+        return (float) Vp;
     }
 
     // Returns normalized plate swing: >0 for positive grid drive.
@@ -194,7 +214,12 @@ struct TriodeStage
         // Rk||Ck one-pole tracks Ip*Rk -> self-bias sag (off when unconfigured)
         if (cathodeRk > 0.f && cathodePole > 0.0)
             cathodeVk += (1.0 - cathodePole) * ((double) lastIp * cathodeRk - cathodeVk);
-        return (Vq - Vp) * outScale;
+        const float y = (Vq - Vp) * outScale;
+        if (coupleR <= 0.0)
+            return y;
+        const double yc = (double) y - coupleX1 + coupleR * coupleY1;
+        coupleX1 = y; coupleY1 = yc;
+        return (float) yc;
     }
 };
 

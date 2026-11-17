@@ -159,6 +159,9 @@ template <int N>
 inline bool solveDense (double (&A)[N][N], double (&b)[N], double (&x)[N])
 {
     double M[N][N + 1];
+    double scale = 0.0;   // pivot threshold is relative, so 1e-19-scaled systems still solve
+    for (int r = 0; r < N; ++r)
+        for (int c = 0; c < N; ++c) scale = std::max (scale, std::abs (A[r][c]));
     for (int r = 0; r < N; ++r)
     {
         for (int c = 0; c < N; ++c) M[r][c] = A[r][c];
@@ -169,7 +172,7 @@ inline bool solveDense (double (&A)[N][N], double (&b)[N], double (&x)[N])
         int piv = col;
         for (int r = col + 1; r < N; ++r)
             if (std::abs (M[r][col]) > std::abs (M[piv][col])) piv = r;
-        if (std::abs (M[piv][col]) < 1e-18) return false;
+        if (std::abs (M[piv][col]) <= 1e-18 * scale) return false;
         if (piv != col) for (int c = col; c <= N; ++c) std::swap (M[piv][c], M[col][c]);
         const double d = M[col][col];
         for (int r = col + 1; r < N; ++r)

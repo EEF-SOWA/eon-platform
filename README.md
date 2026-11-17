@@ -97,6 +97,12 @@ for (int i = 0; i < n * os.factor(); ++i)
 os.down (upsampled, output, n);
 ```
 
+### WDF polarity
+
+Series adaptors follow the Kirchhoff convention (port voltages sum to zero), so
+a +1 V source on the parent port reads -1 V on a series RC's capacitor.
+Parallel adaptors keep the sign.
+
 ## Module overview
 
 | Header | Public types | Contract highlights |
@@ -163,8 +169,3 @@ breaks that contract. Tests are always compiled with strict floating point
 
 MIT — see [LICENSE](LICENSE). SPDX headers mark every public header.
 
-The remaining `third_party/` submodules (`simde`, `sst-cpputils`, both MIT)
-are unused upstream references, not part of this library, and no header, test,
-CMake target or workflow touches them. The GPL-3.0 `sst-basic-blocks` submodule
-was removed because it could not be linked into an MIT-licensed build. See
-[NOTES.md](NOTES.md#vendored-third-party-added-2026-09-18).

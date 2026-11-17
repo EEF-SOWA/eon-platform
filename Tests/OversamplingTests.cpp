@@ -1,3 +1,4 @@
+#include "Dsp/Measure.h"
 #include "Dsp/Oversampling.h"
 #include "Tests/TestHarness.h"
 
@@ -198,4 +199,30 @@ EON_TEST_CASE("eco stage-0 roundtrip is transparent and cheaper")
         peak = std::max(peak, std::abs(static_cast<double>(eco_out[static_cast<size_t>(i)]) -
                                       static_cast<double>(input_copy[static_cast<size_t>(i - delay)])));
     EON_CHECK(peak < 1.0e-3);
+}
+
+EON_TEST_CASE("hqStage2 rejects 8x images better than the 35-tap stage")
+{
+    // A tone at 0.1*fs leaves its stage-2 image at 4fs-0.1fs in the 8x output;
+    // only stage 2 filters that image, so its level measures stage-2 rejection.
+    const auto imageLevel = [](bool hq)
+    {
+        constexpr int blocks = 16, block = 256;
+        eon::Oversampler os;
+        os.setStages(3);
+        os.hqStage2 = hq;
+        os.prepare(block);
+        std::vector<float> in(block), up(block * 8), captured;
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int i = 0; i < block; ++i)
+                in[static_cast<size_t>(i)] = static_cast<float>(
+                    std::sin(2.0 * std::acos(-1.0) * 0.1 * (b * block + i)));
+            os.up(in.data(), block, up.data());
+            if (b >= 4)
+                captured.insert(captured.end(), up.begin(), up.end());
+        }
+        return eon::measure::binMag(captured.data(), captured.size(), 3.9, 8.0);
+    };
+    EON_CHECK(imageLevel(true) < 0.5 * imageLevel(false));
 }

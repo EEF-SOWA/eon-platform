@@ -34,6 +34,7 @@ struct ADAA1
     template <typename F, typename F1>
     inline float process (float x0, F f, F1 f1)
     {
+        if (! std::isfinite (x0)) x0 = 0.f;     // a NaN would stick in the stored state forever
         const double F1x0 = f1 (x0);
         const double dx = (double) x0 - x1;
         const double y = std::abs (dx) < 1e-9 ? f (0.5 * ((double) x0 + x1))
@@ -53,6 +54,7 @@ struct ADAA2
     template <typename F, typename F1, typename F2>
     inline float process (float x0, F f, F1 f1, F2 f2)
     {
+        if (! std::isfinite (x0)) x0 = 0.f;
         constexpr double eps = 1e-9;
         const double F2x0 = f2 (x0);
         const double dx01 = (double) x0 - x1;
@@ -185,6 +187,40 @@ struct SoftClipSat
     inline float process (float x)
     {
         return adaa.process (x, SoftClip::f, SoftClip::F1, SoftClip::F2);
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Hard clip: f(x) = clamp(x, -1, 1). Exact antiderivatives, both C1:
+//   F1(x) = x^2/2 (|x|<=1), |x| - 1/2 beyond
+//   F2(x) = x^3/6 (|x|<=1), sign(x) * (1/6 + (x^2 - |x|)/2) beyond
+// ---------------------------------------------------------------------------
+
+struct HardClip
+{
+    static inline double f (double x) { return std::fmax (-1.0, std::fmin (1.0, x)); }
+
+    static inline double F1 (double x)
+    {
+        const double a = std::abs (x);
+        return a <= 1.0 ? 0.5 * x * x : a - 0.5;
+    }
+
+    static inline double F2 (double x)
+    {
+        const double a = std::abs (x);
+        return a <= 1.0 ? x * x * x / 6.0
+                        : std::copysign (1.0 / 6.0 + 0.5 * (a * a - a), x);
+    }
+};
+
+struct HardClipSat
+{
+    ADAA2 adaa;
+    void reset() { adaa.reset(); }
+    inline float process (float x)
+    {
+        return adaa.process (x, HardClip::f, HardClip::F1, HardClip::F2);
     }
 };
 

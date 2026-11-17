@@ -1,3 +1,5 @@
+#include "Dsp/Adaa.h"
+#include "Dsp/Stages.h"
 #include "Dsp/Measure.h"
 #include "Dsp/Rng.h"
 #include "Dsp/Solvers.h"
@@ -452,4 +454,60 @@ EON_TEST_CASE("measure helpers reject input with no measurable fundamental")
     std::vector<float> silence (1024, 0.0f);
     EON_CHECK (std::isnan (eon::measure::thdPercent (silence.data(), silence.size(),
                                                      1000.0, 48000.0)));
+}
+
+EON_TEST_CASE("series RC follows the documented polarity and time constant")
+{
+    constexpr double fs = 48000.0, R = 1000.0, C = 1e-6;   // tau = 1 ms
+    eon::WdfResistor res (R);
+    eon::WdfCapacitor cap (C);
+    cap.setSampleRate (fs);
+    eon::WdfSeries2 series (res, cap);
+    eon::WdfVSourceIdeal source;
+    source.Vs = 1.0;
+    for (int n = 0; n < 240; ++n)                           // 5 tau
+    {
+        source.incident (series.emitted());
+        series.incident (source.emitted());
+    }
+    EON_CHECK_NEAR (cap.voltage(), -(1.0 - std::exp (-5.0)), 5e-3);
+}
+
+EON_TEST_CASE("solveDense pivots relative to the matrix scale")
+{
+    double A[2][2] = {{1e-19, 0.0}, {0.0, 1e-19}};
+    double b[2] = {3e-19, 4e-19};
+    double x[2] = {};
+    EON_CHECK (eon::solveDense (A, b, x));
+    EON_CHECK_NEAR (x[0], 3.0, 1e-12);
+    EON_CHECK_NEAR (x[1], 4.0, 1e-12);
+
+    double Z[2][2] = {};
+    EON_CHECK (! eon::solveDense (Z, b, x));
+}
+
+EON_TEST_CASE("measure helpers stay finite on degenerate sizes")
+{
+    const float one = 1.f;
+    EON_CHECK_NEAR (eon::measure::binMag (&one, 0, 1000.0, 48000.0), 0.0, 0.0);
+    const auto curve = eon::measure::transferCurve ([] (float x) { return x; }, -1.0, 1.0, 1);
+    EON_CHECK (curve.size() == 1 && std::isfinite (curve[0].first));
+}
+
+EON_TEST_CASE("stateful stages recover after a NaN or Inf input")
+{
+    const float bad[] = {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()};
+    for (const float b : bad)
+    {
+        eon::DCBlocker dc;
+        eon::SoftClipSat adaa2;
+        eon::TanhSat adaa1;
+        eon::Ladder4 ladder;
+        ladder.setCutoff(1000.0, 48000.0);
+        dc.process(b); adaa2.process(b); adaa1.process(b); ladder.process(b);
+        EON_CHECK(std::isfinite(dc.process(0.1f)));
+        EON_CHECK(std::isfinite(adaa2.process(0.1f)));
+        EON_CHECK(std::isfinite(adaa1.process(0.1f)));
+        EON_CHECK(std::isfinite(ladder.process(0.1)));
+    }
 }

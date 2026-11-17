@@ -43,6 +43,7 @@ projects. Include the repository root and include headers as `Dsp/<name>.h`.
   Histories persist across calls, so processing the same contiguous samples in
   different block partitions produces the same stream as one call. Call
   `reset()` when beginning a fresh stream.
+- **Oversampler hqStage2:** swaps the 8x-only stage 2 (4fs<->8fs) for the 59-tap -55 dB set (default 35 taps, -31 dB). Same rules as `ecoStage0`: change while stopped, then `reset()` and re-report latency.
 - **ADAA:** Each `ADAA1`, `ADAA2`, `TanhSat`, or `SoftClipSat` stateful instance
   belongs to one channel and one nonlinear stage. Give each channel/stage its
   own object; sharing an instance interleaves histories.
@@ -124,37 +125,14 @@ ASan/UBSan CTest runs each passed 2/2 tests. This records core-library build
 and test evidence only. It does not establish plugin build/validation, host
 loading, visual rendering, or DAW listening results.
 
-## Vendored third-party (added 2026-09-18)
+## Vendored third-party (removed)
 
-**Not part of the library, and not linked by anything.** No header in `Dsp/`,
-no test, no CMake target and no CI workflow references `third_party/`, so
-nothing here is compiled, linked or shipped by `eon_dsp`.
-
-| Path | Contents | License | State |
-|---|---|---|---|
-| `third_party/sst-basic-blocks` | Surge Synth Team DSP primitives (header-only: filters, envelopes, clippers, quads, modulators, mod-matrix, params, simd, tables) | **GPL-3.0** | **Removed 2026-10-24** — never used here and incompatible with an MIT build |
-| `third_party/sst-cpputils` | header-only utils that `sst-basic-blocks` needed (`ring_buffer.h`, `rtsan_support.h`, allocators) | MIT | Present; unused |
-| `third_party/simde` | SIMDe — SSE intrinsics shim that `sst-basic-blocks` needed on Apple Silicon | MIT | Present; unused |
-
-Update with `git -C third_party/<repo> pull` (shallow clones).
-
-### Why `sst-basic-blocks` was removed
-
-It is GPL-3.0 and `eon_dsp` is MIT. Adding its include path to a product
-build, or shipping that code inside a plugin binary, makes the combined work
-GPL-3.0. Nothing in this repository ever included it, so it was a liability with
-no benefit — the gitlink and its `.gitmodules` stanza were dropped in
-`third_party/sst-basic-blocks` removal rather than left for someone to
-discover later.
-
-`sst-cpputils` and `simde` are MIT and are kept as reference, but they only
-existed to serve `sst-basic-blocks`, so they are equally unused here and are
-candidates for the same treatment. To adopt a primitive from any of this code,
-reimplement it from the published DSP math and gate the result on this
-library's own tests.
-
-The history is recoverable if ever needed:
-`git show cac8aaf:.gitmodules` and `git ls-tree cac8aaf third_party/`.
+`third_party/` no longer exists. `sst-basic-blocks` (GPL-3.0, incompatible with
+this MIT library) was removed 2026-10-24; its unused MIT helpers `sst-cpputils`
+and `simde` were removed 2026-11-17. Nothing in `Dsp/`, the tests, CMake or CI
+referenced them. To adopt a primitive from such code, reimplement it from the
+published DSP math and gate it on this library's tests. History:
+`git ls-tree cac8aaf third_party/`.
 
 ## Duplicate implementations elsewhere (surveyed 2026-09-18)
 

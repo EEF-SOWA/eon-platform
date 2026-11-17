@@ -17,6 +17,7 @@ namespace measure {
 // for non-bin-aligned frequencies). Phase-locked reference — robust for THD.
 inline double binMag (const float* buf, size_t N, double freq, double sr)
 {
+    if (N == 0) return 0.0;
     const double w = 2.0 * std::numbers::pi * freq / sr;
     double re = 0.0, im = 0.0;
     for (size_t i = 0; i < N; ++i)
@@ -68,7 +69,7 @@ transferCurve (F&& proc, double xLo, double xHi, int points = 101, int settle = 
     curve.reserve ((size_t) points);
     for (int i = 0; i < points; ++i)
     {
-        const double x = xLo + (xHi - xLo) * (double) i / (points - 1);
+        const double x = points > 1 ? xLo + (xHi - xLo) * (double) i / (points - 1) : xLo;
         double y = 0.0;
         for (int s = 0; s < settle; ++s) y = (double) proc ((float) x);
         curve.push_back ({ x, y });

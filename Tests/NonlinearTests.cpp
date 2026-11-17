@@ -354,3 +354,33 @@ EON_TEST_CASE("ADAA2 reaches the constant-input limit")
 
     EON_CHECK_NEAR(actual, eon::SoftClip::f(0.5), 1e-6);
 }
+
+EON_TEST_CASE("HardClipSat settles to the clipped constant and stays continuous")
+{
+    for (const float level : {0.5f, 2.0f, -3.0f})
+    {
+        eon::HardClipSat clip;
+        float y = 0.f;
+        for (int i = 0; i < 8; ++i) y = clip.process(level);
+        EON_CHECK_NEAR(y, eon::HardClip::f(level), 1e-6);
+    }
+    // F1 and F2 are continuous at the knee.
+    EON_CHECK_NEAR(eon::HardClip::F1(1.0 + 1e-9), eon::HardClip::F1(1.0 - 1e-9), 1e-8);
+    EON_CHECK_NEAR(eon::HardClip::F2(1.0 + 1e-9), eon::HardClip::F2(1.0 - 1e-9), 1e-8);
+    EON_CHECK_NEAR(eon::HardClip::F2(-2.0), -eon::HardClip::F2(2.0), 0.0);
+}
+
+EON_TEST_CASE("triode output coupling removes a held DC shift and is off by default")
+{
+    const auto settled = [](bool coupled)
+    {
+        eon::TriodeStage stage;
+        if (coupled) stage.setOutputCoupling(20.0, 48000.0);
+        stage.reset();
+        float y = 0.f;
+        for (int i = 0; i < 48000; ++i) y = stage.process(0.3f);
+        return std::abs(y);
+    };
+    EON_CHECK(settled(false) > 1e-3f);
+    EON_CHECK(settled(true) < 1e-4f);
+}

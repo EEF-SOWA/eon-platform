@@ -31,6 +31,11 @@ namespace eon {
 //    on every leaf first. Retuning a leaf afterwards leaves the parent stale
 //    and the junction stops being reflection-free; call retune() to relatch.
 //
+//  * Polarity: series adaptors use the Kirchhoff convention (port voltages sum
+//    to zero), so a source driving the parent port reads NEGATIVE on its
+//    children (+1 V source -> a series RC cap reads -1 V). Parallel adaptors
+//    keep the sign. Negate the read-out, or the source, when you want +Vs.
+//
 // Voltage read-out at any element: v = 0.5*(a + b) with the element's own
 // sign convention — for a cap across the output, read 0.5*(incident+emitted).
 // ---------------------------------------------------------------------------
@@ -39,9 +44,9 @@ struct WdfPort
 {
     double R = 1.0;                               // port resistance [ohm]
     virtual ~WdfPort() = default;
-    virtual double emitted() const = 0;           // b: wave toward parent
-    virtual void   incident (double a) = 0;       // a: wave received from parent
-    virtual void   reset() {}
+    virtual double emitted() const noexcept = 0;           // b: wave toward parent
+    virtual void   incident (double a) noexcept = 0;       // a: wave received from parent
+    virtual void   reset() noexcept {}
 };
 
 // ------------------------------- linear leaves ------------------------------
@@ -49,8 +54,8 @@ struct WdfPort
 struct WdfResistor : WdfPort
 {
     explicit WdfResistor (double r) { R = r; }
-    double emitted() const override { return 0.0; }
-    void   incident (double) override {}
+    double emitted() const noexcept override { return 0.0; }
+    void   incident (double) noexcept override {}
 };
 
 struct WdfCapacitor : WdfPort
@@ -58,9 +63,9 @@ struct WdfCapacitor : WdfPort
     double C, state = 0.0, voltageState = 0.0;
     explicit WdfCapacitor (double c) : C (c) {}
     void setSampleRate (double fs) { R = 1.0 / (2.0 * C * fs); }
-    void reset() override { state = voltageState = 0.0; }
-    double emitted() const override { return state; }      // b[n] = a[n-1]
-    void   incident (double a) override
+    void reset() noexcept override { state = voltageState = 0.0; }
+    double emitted() const noexcept override { return state; }      // b[n] = a[n-1]
+    void   incident (double a) noexcept override
     {
         voltageState = 0.5 * (a + state);
         state = a;
@@ -73,9 +78,9 @@ struct WdfInductor : WdfPort
     double L, state = 0.0;
     explicit WdfInductor (double l) : L (l) {}
     void setSampleRate (double fs) { R = 2.0 * L * fs; }
-    void reset() override { state = 0.0; }
-    double emitted() const override { return -state; }     // b[n] = -a[n-1]
-    void   incident (double a) override { state = a; }
+    void reset() noexcept override { state = 0.0; }
+    double emitted() const noexcept override { return -state; }     // b[n] = -a[n-1]
+    void   incident (double a) noexcept override { state = a; }
 };
 
 // Resistive voltage source — LEAF ONLY. emitted wave ignores the incident,
@@ -84,8 +89,8 @@ struct WdfVSourceRes : WdfPort
 {
     double Vs = 0.0;
     explicit WdfVSourceRes (double rs) { R = rs; }
-    double emitted() const override { return Vs; }
-    void   incident (double) override {}
+    double emitted() const noexcept override { return Vs; }
+    void   incident (double) noexcept override {}
 };
 
 // Ideal voltage source — ROOT ONLY (b = 2Vs - a). Using it as a leaf creates
@@ -94,9 +99,9 @@ struct WdfVSourceIdeal : WdfPort
 {
     double Vs = 0.0;
     double aIn = 0.0;
-    double emitted() const override { return 2.0 * Vs - aIn; }
-    void   incident (double a) override { aIn = a; }
-    void   reset() override { aIn = 0.0; }
+    double emitted() const noexcept override { return 2.0 * Vs - aIn; }
+    void   incident (double a) noexcept override { aIn = a; }
+    void   reset() noexcept override { aIn = 0.0; }
 };
 
 // Resistive current source. i = Is fixed -> b = a - 2R*Is, evaluated with the
@@ -107,9 +112,9 @@ struct WdfISourceRes : WdfPort
     double Is = 0.0;
     double aIn = 0.0;
     explicit WdfISourceRes (double rs) { R = rs; }
-    double emitted() const override { return aIn - 2.0 * R * Is; }
-    void   incident (double a) override { aIn = a; }
-    void   reset() override { aIn = 0.0; }
+    double emitted() const noexcept override { return aIn - 2.0 * R * Is; }
+    void   incident (double a) noexcept override { aIn = a; }
+    void   reset() noexcept override { aIn = 0.0; }
 };
 
 // ------------------------------- adaptors -----------------------------------
@@ -120,16 +125,16 @@ struct WdfSeries2 : WdfPort
     WdfPort& c1; WdfPort& c2;
     WdfSeries2 (WdfPort& a, WdfPort& b) : c1 (a), c2 (b) { retune(); }
     // Relatch the parent R after a child's port resistance changed.
-    void retune() { R = c1.R + c2.R; }
-    double emitted() const override { return -(c1.emitted() + c2.emitted()); }
-    void incident (double a0) override
+    void retune() noexcept { R = c1.R + c2.R; }
+    double emitted() const noexcept override { return -(c1.emitted() + c2.emitted()); }
+    void incident (double a0) noexcept override
     {
         const double a1 = c1.emitted(), a2 = c2.emitted();
         const double s  = a0 + a1 + a2;
         c1.incident (a1 - (c1.R / R) * s);
         c2.incident (a2 - (c2.R / R) * s);
     }
-    void reset() override { c1.reset(); c2.reset(); }
+    void reset() noexcept override { c1.reset(); c2.reset(); }
 };
 
 struct WdfSeries3 : WdfPort
@@ -140,12 +145,12 @@ struct WdfSeries3 : WdfPort
         retune();
     }
     // Relatch the parent R after a child's port resistance changed.
-    void retune() { R = c1.R + c2.R + c3.R; }
-    double emitted() const override
+    void retune() noexcept { R = c1.R + c2.R + c3.R; }
+    double emitted() const noexcept override
     {
         return -(c1.emitted() + c2.emitted() + c3.emitted());
     }
-    void incident (double a0) override
+    void incident (double a0) noexcept override
     {
         const double a1 = c1.emitted(), a2 = c2.emitted(), a3 = c3.emitted();
         const double s  = a0 + a1 + a2 + a3;
@@ -153,7 +158,7 @@ struct WdfSeries3 : WdfPort
         c2.incident (a2 - (c2.R / R) * s);
         c3.incident (a3 - (c3.R / R) * s);
     }
-    void reset() override { c1.reset(); c2.reset(); c3.reset(); }
+    void reset() noexcept override { c1.reset(); c2.reset(); c3.reset(); }
 };
 
 // Parallel junction with two children. Parent port R = 1/(1/c1.R + 1/c2.R).
@@ -163,23 +168,23 @@ struct WdfParallel2 : WdfPort
     double G0;
     WdfParallel2 (WdfPort& a, WdfPort& b) : c1 (a), c2 (b) { retune(); }
     // Relatch the parent R/G0 after a child's port resistance changed.
-    void retune()
+    void retune() noexcept
     {
         G0 = 1.0 / c1.R + 1.0 / c2.R;
         R = 1.0 / G0;
     }
-    double emitted() const override                       // b0 = sum(Gc/G0)*ac
+    double emitted() const noexcept override                       // b0 = sum(Gc/G0)*ac
     {
         return (c1.emitted() / c1.R + c2.emitted() / c2.R) / G0;
     }
-    void incident (double a0) override
+    void incident (double a0) noexcept override
     {
         const double a1 = c1.emitted(), a2 = c2.emitted();
         const double v  = (a0 / R + a1 / c1.R + a2 / c2.R) / (1.0 / R + G0);
         c1.incident (2.0 * v - a1);
         c2.incident (2.0 * v - a2);
     }
-    void reset() override { c1.reset(); c2.reset(); }
+    void reset() noexcept override { c1.reset(); c2.reset(); }
 };
 
 // --------------------------- nonlinear root devices -------------------------
@@ -192,9 +197,9 @@ struct WdfDiode : WdfPort
     double Is = 2.52e-9;      // 1N914-ish
     double Vt = 25.85e-3;
     double aIn = 0.0;
-    void   incident (double a) override { aIn = a; }
-    void   reset() override { aIn = 0.0; }
-    double emitted() const override
+    void   incident (double a) noexcept override { aIn = a; }
+    void   reset() noexcept override { aIn = 0.0; }
+    double emitted() const noexcept override
     {
         if (! std::isfinite (aIn)) return 0.0;
         if (! std::isfinite (R) || ! (R > 0.0)
@@ -216,9 +221,9 @@ struct WdfDiodePair : WdfPort
     double aIn = 0.0;
     mutable double vPrev = 0.0;              // warm start for the Newton loop
     mutable bool solveSucceeded = false;
-    void   incident (double a) override { aIn = a; solveSucceeded = false; }
-    void   reset() override { aIn = vPrev = 0.0; solveSucceeded = false; }
-    double emitted() const override
+    void   incident (double a) noexcept override { aIn = a; solveSucceeded = false; }
+    void   reset() noexcept override { aIn = vPrev = 0.0; solveSucceeded = false; }
+    double emitted() const noexcept override
     {
         solveSucceeded = false;
         if (! std::isfinite (aIn))

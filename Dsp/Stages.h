@@ -29,6 +29,7 @@ struct DCBlocker
     void reset() { x1 = y1 = 0.0; }
     inline float process (float x)
     {
+        if (! std::isfinite (x)) x = 0.0f;   // a NaN would stick in y1 forever
         const double y = (double) x - x1 + R * y1;
         x1 = x; y1 = y;
         return (float) y;
