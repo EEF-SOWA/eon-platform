@@ -255,6 +255,7 @@ struct Oversampler
 
     void setStages (int s) { stages = std::clamp (s, 1, 3); }
     int  factor() const { return 1 << stages; }
+    int  maxBlockSamples() const noexcept { return capacity; }
 
     void prepare (int maxBlock)
     {
